@@ -192,35 +192,28 @@ router.get('/members', async (req, res) => {
 });
 
 
-// Add new member
+// Add new member (without creating contribution)
 router.post('/members', async (req, res) => {
   try {
     const { memberName, email, phone, active } = req.body;
 
     if (!memberName) return res.status(400).json({ message: 'Member name is required' });
 
-    // You can create a default contribution for current month/year if needed
-    const contribution = new Contribution({
+    // Return member object only, no Contribution created
+    const member = {
       memberName,
       email: email || '',
       phone: phone || '',
       active: active !== undefined ? active : true,
-      target: 300,
-      amountPaid: 0,
-      balance: 0,
-      extra: 0,
-      status: 'Pending',
-      month: new Date().getMonth() + 1,
-      year: new Date().getFullYear(),
-    });
+    };
 
-    await contribution.save();
-    res.status(201).json({ message: 'Member added successfully', data: contribution });
+    res.status(201).json({ message: 'Member added successfully', data: member });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 // Edit member by memberName
 router.put('/members/:memberName', async (req, res) => {
@@ -319,5 +312,6 @@ router.delete('/contributions/:id', async (req, res) => {
 });
 
 module.exports = router;
+
 
 
