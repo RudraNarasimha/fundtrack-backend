@@ -255,11 +255,39 @@ router.delete('/members/:memberName', async (req, res) => {
 // Add a contribution
 router.post('/contributions', async (req, res) => {
   try {
-    const contribution = new Contribution(req.body);
+    const { memberName, month, year } = req.body;
+
+    // Check if contribution for this member/month/year already exists
+    const existing = await Contribution.findOne({ memberName, month, year });
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: `Contribution for ${memberName} in ${month}/${year} already exists.`
+      });
+    }
+
+    // Get existing member info (to preserve email, phone, active)
+    const memberData = await Contribution.findOne({ memberName }).lean();
+    if (!memberData) {
+      return res.status(400).json({
+        success: false,
+        message: `Member "${memberName}" not found. Please add in Members first.`
+      });
+    }
+
+    // Merge new data with existing member info
+    const contribution = new Contribution({
+      ...req.body,
+      email: memberData.email || '',
+      phone: memberData.phone || '',
+      active: memberData.active !== undefined ? memberData.active : true,
+    });
+
     await contribution.save();
     res.json({ success: true, message: 'Contribution added successfully', data: contribution });
+
   } catch (err) {
-    console.error(err);
+    console.error('Error adding contribution:', err);
     res.status(500).json({ success: false, message: 'Failed to add contribution' });
   }
 });
@@ -291,4 +319,5 @@ router.delete('/contributions/:id', async (req, res) => {
 });
 
 module.exports = router;
+
 
