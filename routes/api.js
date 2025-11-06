@@ -159,6 +159,39 @@ router.get('/export', async (req, res) => {
   }
 });
 
+// Get all members list
+router.get('/members', async (req, res) => {
+  try {
+    // Get all distinct member names (and their latest info)
+    const members = await Contribution.aggregate([
+      {
+        $group: {
+          _id: "$memberName",
+          email: { $last: "$email" },
+          phone: { $last: "$phone" },
+          active: { $last: "$active" },
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          memberName: "$_id",
+          email: 1,
+          phone: 1,
+          active: 1
+        }
+      },
+      { $sort: { memberName: 1 } }
+    ]);
+
+    res.json({ data: members });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Failed to fetch members' });
+  }
+});
+
+
 // Add new member
 router.post('/members', async (req, res) => {
   try {
@@ -258,3 +291,4 @@ router.delete('/contributions/:id', async (req, res) => {
 });
 
 module.exports = router;
+
