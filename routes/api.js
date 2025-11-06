@@ -1,39 +1,34 @@
 const express = require('express');
 const router = express.Router();
 const Contribution = require('../models/Contribution');
+const Member = require('../models/Member'); 
 const { stringify } = require('csv-stringify');
 const Admin = require('../models/admin');
 const bcrypt = require('bcrypt');
 
-
+// Simple API health check
 router.get('/', (req, res) => {
   res.json({ message: 'Fund Tracker API is working' });
 });
 
+// Admin login
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-
     const admin = await Admin.findOne({ username });
-    if (!admin) {
-      return res.status(401).json({ success: false, message: 'Invalid username or password' });
-    }
+    if (!admin) return res.status(401).json({ success: false, message: 'Invalid username or password' });
 
     const isMatch = await admin.validatePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid username or password' });
-    }
+    if (!isMatch) return res.status(401).json({ success: false, message: 'Invalid username or password' });
 
     res.json({ success: true, message: 'Login successful', token: 'dummy-token' });
-
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-
-// GET /api/contributions?month=10&year=2025&method=All&status=All&search=Ajay
+// Get all contributions
 router.get('/contributions', async (req, res) => {
   try {
     const { month, year, method, status, search, page = 1, limit = 100 } = req.query;
@@ -46,7 +41,8 @@ router.get('/contributions', async (req, res) => {
 
     const contributions = await Contribution.find(query)
       .sort({ memberName: 1 })
-      .skip((page-1)*limit).limit(Number(limit))
+      .skip((page - 1) * limit)
+      .limit(Number(limit))
       .lean();
 
     const total = await Contribution.countDocuments(query);
@@ -57,7 +53,7 @@ router.get('/contributions', async (req, res) => {
   }
 });
 
-// GET /api/summary?month=10&year=2025
+// Get summary
 router.get('/summary', async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -80,7 +76,6 @@ router.get('/summary', async (req, res) => {
     ]);
 
     const result = agg[0] || { totalTarget: 0, totalCollected: 0, totalPending: 0, totalExtra: 0, count: 0 };
-
     res.json({
       targetPerHead: result.count > 0 ? Math.round(result.totalTarget / result.count) : 0,
       monthlyTarget: result.totalTarget,
@@ -94,7 +89,7 @@ router.get('/summary', async (req, res) => {
   }
 });
 
-// GET /api/charts?year=2025&month=10
+// Charts
 router.get('/charts', async (req, res) => {
   try {
     const { year, month } = req.query;
@@ -103,15 +98,12 @@ router.get('/charts', async (req, res) => {
     const match = { year: y };
     if (month) match.month = Number(month);
 
-    // monthly totals for bar chart (group by month regardless)
-    // But if month is passed, monthly data is only for that month (or empty array)
     const monthly = await Contribution.aggregate([
       { $match: { year: y } },
       { $group: { _id: "$month", total: { $sum: "$amountPaid" }, target: { $sum: "$target" }, extra: { $sum: "$extra" } } },
       { $sort: { _id: 1 } }
     ]);
 
-    // payment method breakdown for selected year & month (if month provided)
     const methods = await Contribution.aggregate([
       { $match: match },
       { $group: { _id: "$method", total: { $sum: "$amountPaid" } } }
@@ -124,7 +116,7 @@ router.get('/charts', async (req, res) => {
   }
 });
 
-
+// Export contributions CSV
 router.get('/export', async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -146,12 +138,8 @@ router.get('/export', async (req, res) => {
     }));
 
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="contributions_${month || 'all'}_${year || 'all'}.csv"`
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="contributions_${month || 'all'}_${year || 'all'}.csv"`);
 
-    // CSV stringify
     stringify(rows, { header: true }).pipe(res);
   } catch (err) {
     console.error(err);
@@ -159,31 +147,12 @@ router.get('/export', async (req, res) => {
   }
 });
 
-// Get all members list
+// ---------------- MEMBERS ROUTES ----------------
+
+// Get all members
 router.get('/members', async (req, res) => {
   try {
-    // Get all distinct member names (and their latest info)
-    const members = await Contribution.aggregate([
-      {
-        $group: {
-          _id: "$memberName",
-          email: { $last: "$email" },
-          phone: { $last: "$phone" },
-          active: { $last: "$active" },
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          memberName: "$_id",
-          email: 1,
-          phone: 1,
-          active: 1
-        }
-      },
-      { $sort: { memberName: 1 } }
-    ]);
-
+    const members = await Member.find().sort({ memberName: 1 }).lean();
     res.json({ data: members });
   } catch (err) {
     console.error(err);
@@ -191,22 +160,24 @@ router.get('/members', async (req, res) => {
   }
 });
 
-
-// Add new member (without creating contribution)
+// Add a new member
 router.post('/members', async (req, res) => {
   try {
     const { memberName, email, phone, active } = req.body;
-
     if (!memberName) return res.status(400).json({ message: 'Member name is required' });
 
-    // Return member object only, no Contribution created
-    const member = {
+    // Check if member exists
+    const exists = await Member.findOne({ memberName });
+    if (exists) return res.status(400).json({ message: 'Member already exists' });
+
+    const member = new Member({
       memberName,
       email: email || '',
       phone: phone || '',
-      active: active !== undefined ? active : true,
-    };
+      active: active !== undefined ? active : true
+    });
 
+    await member.save();
     res.status(201).json({ message: 'Member added successfully', data: member });
   } catch (err) {
     console.error(err);
@@ -214,71 +185,66 @@ router.post('/members', async (req, res) => {
   }
 });
 
-
-// Edit member by memberName
-router.put('/members/:memberName', async (req, res) => {
+// Edit member by _id
+router.put('/members/:id', async (req, res) => {
   try {
-    const { memberName } = req.params;
-    const { email, phone, active } = req.body;
+    const { id } = req.params;
+    const { memberName, email, phone, active } = req.body;
 
-    const contributions = await Contribution.updateMany(
-      { memberName },
-      { $set: { email, phone, active } }
+    const member = await Member.findByIdAndUpdate(
+      id,
+      { memberName, email, phone, active },
+      { new: true }
     );
 
-    res.json({ message: 'Member updated successfully' });
+    if (!member) return res.status(404).json({ message: 'Member not found' });
+    res.json({ message: 'Member updated successfully', data: member });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Delete member by memberName
-router.delete('/members/:memberName', async (req, res) => {
+// Delete member by _id
+router.delete('/members/:id', async (req, res) => {
   try {
-    const { memberName } = req.params;
-    await Contribution.deleteMany({ memberName });
-    res.json({ message: 'Member deleted successfully' });
+    const { id } = req.params;
+    const member = await Member.findByIdAndDelete(id);
+    if (!member) return res.status(404).json({ message: 'Member not found' });
+
+    await Contribution.deleteMany({ memberName: member.memberName }); // delete contributions too
+    res.json({ message: 'Member and contributions deleted successfully' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+
+// ---------------- CONTRIBUTIONS ROUTES ----------------
 
 // Add a contribution
 router.post('/contributions', async (req, res) => {
   try {
     const { memberName, month, year } = req.body;
 
-    // Check if contribution for this member/month/year already exists
+    // Check if member exists
+    const memberData = await Member.findOne({ memberName });
+    if (!memberData) return res.status(400).json({ message: `Member "${memberName}" not found. Please add in Members first.` });
+
+    // Check if contribution already exists
     const existing = await Contribution.findOne({ memberName, month, year });
-    if (existing) {
-      return res.status(400).json({
-        success: false,
-        message: `Contribution for ${memberName} in ${month}/${year} already exists.`
-      });
-    }
+    if (existing) return res.status(400).json({ message: `Contribution for ${memberName} in ${month}/${year} already exists.` });
 
-    // Get existing member info (to preserve email, phone, active)
-    const memberData = await Contribution.findOne({ memberName }).lean();
-    if (!memberData) {
-      return res.status(400).json({
-        success: false,
-        message: `Member "${memberName}" not found. Please add in Members first.`
-      });
-    }
-
-    // Merge new data with existing member info
     const contribution = new Contribution({
       ...req.body,
-      email: memberData.email || '',
-      phone: memberData.phone || '',
-      active: memberData.active !== undefined ? memberData.active : true,
+      email: memberData.email,
+      phone: memberData.phone,
+      active: memberData.active
     });
 
     await contribution.save();
     res.json({ success: true, message: 'Contribution added successfully', data: contribution });
-
   } catch (err) {
     console.error('Error adding contribution:', err);
     res.status(500).json({ success: false, message: 'Failed to add contribution' });
@@ -312,6 +278,3 @@ router.delete('/contributions/:id', async (req, res) => {
 });
 
 module.exports = router;
-
-
-
