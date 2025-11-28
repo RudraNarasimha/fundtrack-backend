@@ -5,6 +5,7 @@ const Member = require('../models/Member');
 const { stringify } = require('csv-stringify');
 const Admin = require('../models/admin');
 const bcrypt = require('bcrypt');
+const Loan = require('../models/Loan');
 
 // Simple API health check
 router.get('/', (req, res) => {
@@ -277,4 +278,100 @@ router.delete('/contributions/:id', async (req, res) => {
   }
 });
 
+// ---------------- LOAN ROUTES ----------------
+
+// Create loan
+router.post("/loan/create", async (req, res) => {
+  try {
+    const loan = new Loan({
+      ...req.body,
+      amountPaid: req.body.amountPaid || 0,
+      remainingDue: req.body.remainingDue || req.body.totalRepayment
+    });
+    await loan.save();
+    res.status(201).json({ message: "Loan created successfully", data: loan });
+  } catch (err) {
+    console.error("Loan create error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Get all loans
+router.get("/loan", async (req, res) => {
+  try {
+    const loans = await Loan.find().sort({ createdAt: -1 }).lean();
+    res.json({ data: loans });
+  } catch (err) {
+    console.error("Fetch loans error:", err);
+    res.status(500).json({ message: "Failed to fetch loans" });
+  }
+});
+
+// Get single loan
+router.get("/loan/:id", async (req, res) => {
+  try {
+    const loan = await Loan.findById(req.params.id).lean();
+    res.json({ data: loan });
+  } catch (err) {
+    console.error("Get loan error:", err);
+    res.status(500).json({ message: "Failed to get loan" });
+  }
+});
+
+// Update loan (general updates)
+router.put("/loan/:id", async (req, res) => {
+  try {
+    const updated = await Loan.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ message: "Loan updated", data: updated });
+  } catch (err) {
+    console.error("Update loan error:", err);
+    res.status(500).json({ message: "Error updating loan" });
+  }
+});
+
+// Delete loan
+router.delete("/loan/:id", async (req, res) => {
+  try {
+    await Loan.findByIdAndDelete(req.params.id);
+    res.json({ message: "Loan deleted" });
+  } catch (err) {
+    console.error("Delete loan error:", err);
+    res.status(500).json({ message: "Error deleting loan" });
+  }
+});
+
+// Add installment / payment
+router.post("/loan/installment/:id", async (req, res) => {
+  try {
+    const loan = await Loan.findById(req.params.id);
+    if (!loan) return res.status(404).json({ message: "Loan not found" });
+
+    const { amount, date, receiptNumber, paymentMethod, notes } = req.body;
+
+    // Add installment
+    loan.installments.push({ amount, date: date || new Date(), receiptNumber, paymentMethod, notes });
+
+    // Update total amount paid
+    loan.amountPaid += Number(amount);
+
+    // Update remaining due
+    loan.remainingDue = loan.totalRepayment - loan.amountPaid;
+
+    // Update status if fully paid
+    if (loan.remainingDue <= 0) {
+      loan.remainingDue = 0;
+      loan.status = "Completed";
+    } else {
+      loan.status = "Active";
+    }
+
+    await loan.save();
+    res.json({ message: "Installment added", data: loan });
+  } catch (err) {
+    console.error("Add installment error:", err);
+    res.status(500).json({ message: "Error adding installment" });
+  }
+});
+
 module.exports = router;
+
